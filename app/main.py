@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from datetime import date, timedelta
+from typing import Any, Sequence
 
+from agent_loop import AgentRun, ModelTurn, ScriptedModel, ToolCall, run_agent
 from dispatcher import TOOL_REGISTRY, dispatch_tool
 from guard import IdempotencyStore, run_with_guard
 from request_context import RequestContext, use_context
@@ -11,7 +13,64 @@ from tool_core import ToolResult
 from tool_spec import ToolSpec
 
 
+class WeatherDrivenModel:
+    """演示用模型：读取历史、判断进度、决定下一步。
+
+    真实项目里这里是 LLM 客户端；把它换成真实模型，循环逻辑一行都不用改。
+    注意它必须自己在历史里定位关心的那一步，而不是假设“最后一条就是我想要的”。
+    """
+
+    def next_turn(self, history: Sequence[dict[str, Any]]) -> ModelTurn:
+        tool_entries = [entry for entry in history if entry.get("role") == "tool"]
+
+        def last_of(tool_name: str) -> dict[str, Any] | None:
+            for entry in reversed(tool_entries):
+                if entry["tool_name"] == tool_name:
+                    return entry
+            return None
+
+        weather = last_of("get_weather")
+        if weather is None:
+            return ModelTurn(tool_call=ToolCall("get_weather", {"city": "北京"}))
+
+        weather_result = weather["result"]
+        if weather_result["status"] != "success":
+            return ModelTurn(
+                final_answer=f"查询没有成功：{weather_result['message']}"
+            )
+
+        if weather_result["data"]["condition"] != "rain":
+            return ModelTurn(final_answer="北京今天不下雨，不用带伞。")
+
+        todo = last_of("create_todo")
+        if todo is not None:
+            todo_result = todo["result"]
+            if todo_result["status"] == "success":
+                return ModelTurn(final_answer="北京有雨，带伞的待办已经建好了。")
+            return ModelTurn(
+                final_answer=f"待办没有建成：{todo_result['message']}"
+            )
+
+        tomorrow = (date.today() + timedelta(days=1)).isoformat()
+        return ModelTurn(
+            tool_call=ToolCall(
+                "create_todo",
+                {"title": "带伞（北京有雨）", "due_date": tomorrow},
+            )
+        )
+
+
 def main() -> None:
+    _print_registry()
+    _print_model_contract()
+    _run_read_examples()
+    _demo_guard()
+    _demo_todo()
+    _demo_agent_loop()
+    print()
+
+
+def _print_registry() -> None:
     for spec in TOOL_REGISTRY.values():
         print(
             f"{spec.name:<18} risk={spec.risk_level} "
@@ -19,6 +78,8 @@ def main() -> None:
             f"retry_on_timeout={spec.retryable_on_timeout}"
         )
 
+
+def _print_model_contract() -> None:
     print("\n--- 提供给模型的工具契约 ---")
     print(
         json.dumps(
@@ -28,24 +89,15 @@ def main() -> None:
         )
     )
 
+
+def _run_read_examples() -> None:
     print("\n--- 模拟模型提出的调用（不可信输入）---")
     raw_model_outputs = [
         {"tool_name": "get_weather", "arguments": {"city": "北京"}},
         {"tool_name": "get_weather", "arguments": {"city": ""}},
-        {
-            "tool_name": "get_exchange_rate",
-            "arguments": {"base_currency": "CNY", "quote_currency": "EUR"},
-        },
-        {
-            "tool_name": "get_exchange_rate",
-            "arguments": {"base_currency": "cny", "quote_currency": "USD"},
-        },
-        {"tool_name": "search", "arguments": {"query": "空调"}},
         {"tool_name": "search", "arguments": {"query": "维修", "limit": 1}},
-        {"tool_name": "search", "arguments": {"query": "sla", "scope": "docs"}},
         {"tool_name": "search", "arguments": {"query": "不存在的关键词"}},
         {"tool_name": "search", "arguments": {"query": "工单", "scope": "users"}},
-        {"tool_name": "search", "arguments": {"query": "工单", "limit": True}},
         {"tool_name": "search_weather", "arguments": {"city": "北京"}},
     ]
 
@@ -56,17 +108,12 @@ def main() -> None:
         )
         label = model_output["tool_name"]
         if result.status == "success":
-            summary = _summarize(result.data)
-            print(f"OK    {label:<18} {summary}")
+            print(f"OK    {label:<18} {_summarize(result.data)}")
         else:
             print(
                 f"FAIL  {result.error.type.value:<24} "
                 f"{result.error.execution_state.value:<12} {result.error.message}"
             )
-
-    _demo_guard()
-    _demo_todo()
-    print()
 
 
 def _demo_guard() -> None:
@@ -168,6 +215,67 @@ def _demo_todo() -> None:
 
         listing = dispatch_tool("list_todos", {})
         print(f"最终列表：{listing.data}")
+
+
+def _demo_agent_loop() -> None:
+    """演示 Agent 循环：模型决策、受控纠错、确认中断、幂等去重。"""
+    print("\n--- Agent 循环演示 ---")
+
+    reset_todos()
+    context = RequestContext(actor_id="user-42", session_id="session-a")
+
+    # 场景 A：模型幻觉出一个不存在的工具名，靠错误反馈自己纠正。
+    hallucinating = ScriptedModel(
+        [
+            ModelTurn(tool_call=ToolCall("search_weather", {"city": "北京"})),
+            ModelTurn(tool_call=ToolCall("get_weather", {"city": "北京"})),
+            ModelTurn(final_answer="北京今天有雨，记得带伞。"),
+        ]
+    )
+    run_a = run_agent("北京今天下雨吗", hallucinating, context=context)
+    _print_run("A. 幻觉工具名 → 受控纠错", run_a)
+    feedback = hallucinating.seen_histories[1][-1]["result"]
+    print(f"  模型收到的纠错提示：{feedback['error_type']} / {feedback['message']}")
+    print(f"  可用工具：{feedback['available_tools']}")
+
+    # 场景 B：模型根据天气结果决定写待办，但写操作被确认机制拦下。
+    run_b = run_agent("北京今天下雨吗", WeatherDrivenModel(), context=context)
+    _print_run("B. 需要写操作但没有确认", run_b)
+
+    with use_context(context):
+        listing = dispatch_tool("list_todos", {})
+    print(f"  未确认时数据条数：{listing.data['total_matched']}（确认前不落库）")
+
+    # 场景 C：用户确认后重跑，写成功；同参数再跑一次被幂等层去重。
+    run_c = run_agent(
+        "北京今天下雨吗", WeatherDrivenModel(), context=context, confirmed=True
+    )
+    _print_run("C. 已确认（第一次）", run_c)
+
+    run_d = run_agent(
+        "北京今天下雨吗", WeatherDrivenModel(), context=context, confirmed=True
+    )
+    _print_run("D. 已确认（同参数再跑一次）", run_d)
+
+    with use_context(context):
+        listing = dispatch_tool("list_todos", {})
+    print(f"  最终数据条数：{listing.data['total_matched']}（重复执行只落一条）")
+
+
+def _print_run(title: str, run: AgentRun) -> None:
+    print(f"\n[{title}]")
+    for step in run.steps:
+        if step.result.status == "success":
+            outcome = "success"
+        else:
+            outcome = step.result.error.type.value
+        print(
+            f"  round {step.round_index}: "
+            f"{step.call.tool_name}({step.call.arguments}) → {outcome}"
+        )
+    print(f"  status={run.status} stop_reason={run.stop_reason}")
+    if run.answer is not None:
+        print(f"  answer={run.answer}")
 
 
 def _summarize(data: dict[str, object]) -> str:
