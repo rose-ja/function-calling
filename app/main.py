@@ -1,50 +1,54 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 from tool_core import ToolResult
-from weather_tool import execute_weather
+from tool_spec import ToolSpec, run_tool
+from weather_tool import WEATHER_TOOL
 
 
-ToolFunction = Callable[[Any], ToolResult]
-
-TOOL_REGISTRY: dict[str, ToolFunction] = {
-    "get_weather": execute_weather,
+TOOL_REGISTRY: dict[str, ToolSpec] = {
+    WEATHER_TOOL.name: WEATHER_TOOL,
 }
 
 
-def dispatch_tool(tool_name: Any, arguments: Any) -> ToolResult:
+def dispatch_tool(
+    tool_name: Any,
+    arguments: Any,
+    *,
+    confirmed: bool = False,
+    registry: dict[str, ToolSpec] | None = None,
+) -> ToolResult:
+    specs = TOOL_REGISTRY if registry is None else registry
+
     if not isinstance(tool_name, str) or not tool_name.strip():
         return ToolResult.failure(
             "INVALID_TOOL_NAME",
             "工具名必须是非空字符串",
         )
 
-    # 只有注册过的函数可以由模型请求；不根据字符串动态寻找函数。
-    tool = TOOL_REGISTRY.get(tool_name)
-    if tool is None:
+    # 只允许调用注册表中声明的工具，不按字符串动态查找函数。
+    spec = specs.get(tool_name.strip())
+    if spec is None:
         return ToolResult.failure(
             "UNKNOWN_TOOL",
             f"未注册的工具：{tool_name}",
         )
 
+    if spec.requires_confirmation and not confirmed:
+        return ToolResult.failure(
+            "CONFIRMATION_REQUIRED",
+            f"{spec.name} 会修改业务数据，需要用户确认",
+        )
+
     try:
-        result = tool(arguments)
+        return run_tool(spec, arguments)
     except Exception:
-        # 内部异常应另行记录日志，不把堆栈直接交给模型。
+        # 内部异常应写入日志，对外只返回不含堆栈的安全信息。
         return ToolResult.failure(
             "INTERNAL_ERROR",
             "工具执行时发生内部错误",
         )
-
-    if not isinstance(result, ToolResult):
-        return ToolResult.failure(
-            "INTERNAL_ERROR",
-            "工具返回了无效结果",
-        )
-
-    return result
 
 
 def main() -> None:
@@ -52,6 +56,7 @@ def main() -> None:
         {"tool_name": "get_weather", "arguments": {"city": "北京"}},
         {"tool_name": "search_weather", "arguments": {"city": "北京"}},
         {"tool_name": "get_weather", "arguments": {"city": ""}},
+        {"tool_name": "get_weather", "arguments": {"city": "北京", "force": True}},
     ]
 
     for model_output in examples:

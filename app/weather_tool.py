@@ -3,26 +3,23 @@ from __future__ import annotations
 from typing import Any
 
 from tool_core import ToolResult
+from tool_spec import ToolSpec
 
 
-WEATHER_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "get_weather",
-        "description": "查询支持城市的模拟天气；只读取数据，不修改任何业务信息",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "city": {
-                    "type": "string",
-                    "description": "城市名称，例如北京或上海",
-                    "minLength": 1,
-                },
-            },
-            "required": ["city"],
-            "additionalProperties": False,
+# 这份 Schema 是唯一事实来源：既提供给模型，也用于运行时校验。
+# pattern 在 JSON Schema 中是部分匹配，\S 表示至少包含一个非空白字符。
+WEATHER_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "city": {
+            "type": "string",
+            "description": "城市名称，例如北京或上海",
+            "minLength": 1,
+            "pattern": r"\S",
         },
     },
+    "required": ["city"],
+    "additionalProperties": False,
 }
 
 SUPPORTED_WEATHER = {
@@ -37,38 +34,29 @@ SUPPORTED_WEATHER = {
 }
 
 
-def execute_weather(arguments: Any) -> ToolResult:
-    if not isinstance(arguments, dict):
-        return ToolResult.failure(
-            "INVALID_ARGUMENTS",
-            "工具参数必须是 JSON 对象",
-        )
+def execute_weather(arguments: dict[str, Any]) -> ToolResult:
+    city = arguments["city"].strip()
 
-    if set(arguments) != {"city"}:
-        return ToolResult.failure(
-            "INVALID_ARGUMENTS",
-            "参数必须且只能包含 city",
-        )
-
-    city = arguments["city"]
-    if not isinstance(city, str) or not city.strip():
-        return ToolResult.failure(
-            "INVALID_ARGUMENTS",
-            "city 必须是非空字符串",
-        )
-
-    normalized_city = city.strip()
-    weather = SUPPORTED_WEATHER.get(normalized_city)
+    weather = SUPPORTED_WEATHER.get(city)
     if weather is None:
         return ToolResult.failure(
             "CITY_NOT_SUPPORTED",
-            f"暂不支持查询城市：{normalized_city}",
+            f"暂不支持查询城市：{city}",
         )
 
     return ToolResult.success(
         {
-            "city": normalized_city,
+            "city": city,
             "condition": weather["condition"],
             "temperature_celsius": weather["temperature_celsius"],
         }
     )
+
+
+WEATHER_TOOL = ToolSpec(
+    name="get_weather",
+    description="查询支持城市的模拟天气；只读取数据，不修改任何业务信息",
+    parameters=WEATHER_PARAMETERS,
+    handler=execute_weather,
+    risk_level="read",
+)

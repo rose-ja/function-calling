@@ -2,6 +2,23 @@ import unittest
 
 from main import dispatch_tool
 from tool_core import ToolResult
+from tool_spec import ToolSpec
+
+
+def build_fake_write_tool() -> ToolSpec:
+    return ToolSpec(
+        name="assign_order",
+        description="修改工单负责人；会写入业务数据",
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+        handler=lambda arguments: ToolResult.success({"assigned": True}),
+        risk_level="write",
+        requires_confirmation=True,
+    )
 
 
 class DispatcherTests(unittest.TestCase):
@@ -24,8 +41,13 @@ class DispatcherTests(unittest.TestCase):
 
         self.assertEqual(result.error.type, "INVALID_TOOL_NAME")
 
-    def test_weather_parameter_error_is_preserved(self) -> None:
-        result = dispatch_tool("get_weather", {"city": ""})
+    def test_arguments_must_be_an_object(self) -> None:
+        result = dispatch_tool("get_weather", ["北京"])
+
+        self.assertEqual(result.error.type, "INVALID_ARGUMENTS")
+
+    def test_extra_field_is_rejected_before_handler_runs(self) -> None:
+        result = dispatch_tool("get_weather", {"city": "北京", "force": True})
 
         self.assertEqual(result.error.type, "INVALID_ARGUMENTS")
 
@@ -33,6 +55,17 @@ class DispatcherTests(unittest.TestCase):
         result = dispatch_tool("get_weather", {"city": "广州"})
 
         self.assertEqual(result.error.type, "CITY_NOT_SUPPORTED")
+
+    def test_write_tool_requires_confirmation(self) -> None:
+        registry = {"assign_order": build_fake_write_tool()}
+
+        blocked = dispatch_tool("assign_order", {}, registry=registry)
+        self.assertEqual(blocked.status, "error")
+        self.assertEqual(blocked.error.type, "CONFIRMATION_REQUIRED")
+
+        allowed = dispatch_tool("assign_order", {}, confirmed=True, registry=registry)
+        self.assertEqual(allowed.status, "success")
+        self.assertTrue(allowed.data["assigned"])
 
 
 if __name__ == "__main__":
