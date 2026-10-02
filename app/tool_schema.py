@@ -141,6 +141,14 @@ def _validate_number(
     path: str,
     issues: list[ValidationIssue],
 ) -> None:
+    exclusive_minimum = schema.get("exclusiveMinimum")
+    if _is_number(exclusive_minimum) and value <= exclusive_minimum:
+        issues.append(ValidationIssue(path, f"必须大于 {exclusive_minimum}"))
+
+    exclusive_maximum = schema.get("exclusiveMaximum")
+    if _is_number(exclusive_maximum) and value >= exclusive_maximum:
+        issues.append(ValidationIssue(path, f"必须小于 {exclusive_maximum}"))
+
     minimum = schema.get("minimum")
     if _is_number(minimum) and value < minimum:
         issues.append(ValidationIssue(path, f"不能小于 {minimum}"))

@@ -1,6 +1,6 @@
 import unittest
 
-from tool_schema import validate_arguments
+from app.tool_schema import validate_arguments
 
 
 SCHEMA = {
@@ -8,6 +8,8 @@ SCHEMA = {
     "properties": {
         "city": {"type": "string", "minLength": 1, "pattern": r"\S"},
         "days": {"type": "integer", "minimum": 1, "maximum": 7},
+        "amount": {"type": "number", "exclusiveMinimum": 0},
+        "tags": {"type": "array", "maxItems": 2, "items": {"type": "string"}},
     },
     "required": ["city"],
     "additionalProperties": False,
@@ -20,7 +22,10 @@ def issue_paths(arguments: object) -> list[str]:
 
 class SchemaValidationTests(unittest.TestCase):
     def test_valid_arguments_pass(self) -> None:
-        self.assertEqual(validate_arguments(SCHEMA, {"city": "北京", "days": 3}), [])
+        self.assertEqual(
+            validate_arguments(SCHEMA, {"city": "北京", "days": 3, "amount": 1.5}),
+            [],
+        )
 
     def test_arguments_must_be_object(self) -> None:
         self.assertEqual(issue_paths(["北京"]), ["$"])
@@ -42,6 +47,18 @@ class SchemaValidationTests(unittest.TestCase):
 
     def test_out_of_range_integer_is_rejected(self) -> None:
         self.assertEqual(issue_paths({"city": "北京", "days": 30}), ["$.days"])
+
+    def test_zero_violates_exclusive_minimum(self) -> None:
+        self.assertEqual(issue_paths({"city": "北京", "amount": 0}), ["$.amount"])
+
+    def test_array_items_are_validated(self) -> None:
+        self.assertEqual(issue_paths({"city": "北京", "tags": ["a", 1]}), ["$.tags[1]"])
+
+    def test_array_length_is_limited(self) -> None:
+        self.assertEqual(
+            issue_paths({"city": "北京", "tags": ["a", "b", "c"]}),
+            ["$.tags"],
+        )
 
     def test_all_issues_are_reported_together(self) -> None:
         self.assertEqual(
