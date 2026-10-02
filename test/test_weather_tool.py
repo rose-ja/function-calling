@@ -1,7 +1,7 @@
 import unittest
 
-from app.tool_core import ErrorType, ExecutionState
-from app.weather_tool import execute_weather
+from tool_core import ErrorType, ExecutionState
+from weather_tool import execute_weather
 
 
 class WeatherToolTests(unittest.TestCase):

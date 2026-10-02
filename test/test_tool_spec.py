@@ -1,8 +1,8 @@
 import unittest
 
-from app.tool_core import ErrorType, ExecutionState, ToolResult
-from app.tool_spec import ToolSpec, run_tool
-from app.weather_tool import WEATHER_PARAMETERS, WEATHER_TOOL
+from tool_core import ErrorType, ExecutionState, ToolResult
+from tool_spec import ToolSpec, run_tool
+from weather_tool import WEATHER_PARAMETERS, WEATHER_TOOL
 
 
 def build_spec(**overrides: object) -> ToolSpec:

@@ -1,8 +1,8 @@
 import unittest
 
-from app.dispatcher import TOOL_REGISTRY, dispatch_tool
-from app.tool_core import ErrorType, ToolResult
-from app.tool_spec import ToolSpec
+from dispatcher import TOOL_REGISTRY, dispatch_tool
+from tool_core import ErrorType, ToolResult
+from tool_spec import ToolSpec
 
 
 def build_fake_write_tool() -> ToolSpec:

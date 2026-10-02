@@ -1,6 +1,6 @@
 import unittest
 
-from app.tool_schema import validate_arguments
+from tool_schema import validate_arguments
 
 
 SCHEMA = {
