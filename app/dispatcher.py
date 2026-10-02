@@ -6,10 +6,11 @@ from tool_core import ErrorType, ToolResult
 from tool_spec import ToolSpec, run_tool
 from weather_tool import WEATHER_TOOL
 from exchange_rate_tool import EXCHANGE_RATE_TOOL
+from search_tool import SEARCH_TOOL
 
 TOOL_REGISTRY: dict[str, ToolSpec] = {
     spec.name: spec
-    for spec in (WEATHER_TOOL, EXCHANGE_RATE_TOOL)
+    for spec in (WEATHER_TOOL, EXCHANGE_RATE_TOOL, SEARCH_TOOL)
 }
 
 def dispatch_tool(

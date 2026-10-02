@@ -40,7 +40,7 @@ def build_exploding_tool() -> ToolSpec:
 
 class DispatcherPolicyTests(unittest.TestCase):
     def test_registry_exposes_weather_tool(self) -> None:
-        self.assertEqual(sorted(TOOL_REGISTRY), ["get_exchange_rate", "get_weather"])
+        self.assertEqual(sorted(TOOL_REGISTRY), ["get_exchange_rate", "get_weather", "search"])
 
     def test_registered_tool_runs_through_registry(self) -> None:
         result = dispatch_tool("get_weather", {"city": "上海"})

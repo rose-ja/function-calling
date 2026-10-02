@@ -25,20 +25,7 @@ def main() -> None:
     print("\n--- 模拟模型提出的调用（不可信输入）---")
     raw_model_outputs = [
         {"tool_name": "get_weather", "arguments": {"city": "北京"}},
-        {"tool_name": "get_weather", "arguments": {"city": "广州"}},
         {"tool_name": "get_weather", "arguments": {"city": ""}},
-        {
-            "tool_name": "get_exchange_rate",
-            "arguments": {"base_currency": "CNY", "quote_currency": "USD"},
-        },
-        {
-            "tool_name": "get_exchange_rate",
-            "arguments": {
-                "base_currency": "CNY",
-                "quote_currency": "JPY",
-                "amount": 1000,
-            },
-        },
         {
             "tool_name": "get_exchange_rate",
             "arguments": {"base_currency": "CNY", "quote_currency": "EUR"},
@@ -47,14 +34,12 @@ def main() -> None:
             "tool_name": "get_exchange_rate",
             "arguments": {"base_currency": "cny", "quote_currency": "USD"},
         },
-        {
-            "tool_name": "get_exchange_rate",
-            "arguments": {
-                "base_currency": "CNY",
-                "quote_currency": "USD",
-                "amount": 0,
-            },
-        },
+        {"tool_name": "search", "arguments": {"query": "空调"}},
+        {"tool_name": "search", "arguments": {"query": "维修", "limit": 1}},
+        {"tool_name": "search", "arguments": {"query": "sla", "scope": "docs"}},
+        {"tool_name": "search", "arguments": {"query": "不存在的关键词"}},
+        {"tool_name": "search", "arguments": {"query": "工单", "scope": "users"}},
+        {"tool_name": "search", "arguments": {"query": "工单", "limit": True}},
         {"tool_name": "search_weather", "arguments": {"city": "北京"}},
     ]
 
@@ -63,13 +48,29 @@ def main() -> None:
             model_output["tool_name"],
             model_output["arguments"],
         )
+        label = model_output["tool_name"]
         if result.status == "success":
-            print(f"OK    {model_output['tool_name']:<18} {result.data}")
+            summary = _summarize(result.data)
+            print(f"OK    {label:<18} {summary}")
         else:
             print(
                 f"FAIL  {result.error.type.value:<20} "
                 f"{result.error.execution_state.value:<12} {result.error.message}"
             )
+
+
+def _summarize(data: dict[str, object]) -> str:
+    """结果里可能带 items 这样的长列表，打印时压缩成摘要。"""
+    if "items" not in data:
+        return str(data)
+
+    items = data["items"]
+    count = len(items) if isinstance(items, list) else 0
+    return (
+        f"query={data['query']!r} scope={data['scope']} "
+        f"items={count} total_matched={data['total_matched']} "
+        f"truncated={data['truncated']}"
+    )
 
 
 if __name__ == "__main__":
