@@ -84,9 +84,40 @@ class DispatcherPolicyTests(unittest.TestCase):
         self.assertEqual(blocked.status, "error")
         self.assertEqual(blocked.error.type, ErrorType.CONFIRMATION_REQUIRED)
 
-        allowed = dispatch_tool("assign_order", {}, confirmed=True, registry=registry)
+    def test_write_tool_requires_both_confirmation_and_idempotency_key(self) -> None:
+        registry = {"assign_order": build_fake_write_tool()}
+
+        # 已确认但没有幂等键：仍然不允许执行。
+        no_key = dispatch_tool(
+            "assign_order",
+            {},
+            confirmed=True,
+            registry=registry,
+        )
+        self.assertEqual(no_key.error.type, ErrorType.MISSING_IDEMPOTENCY_KEY)
+
+        allowed = dispatch_tool(
+            "assign_order",
+            {},
+            confirmed=True,
+            idempotency_key="test-dispatcher:assign_order:request-1",
+            registry=registry,
+        )
         self.assertEqual(allowed.status, "success")
         self.assertTrue(allowed.data["assigned"])
+
+    def test_replayed_write_returns_the_same_result(self) -> None:
+        registry = {"assign_order": build_fake_write_tool()}
+        key = "test-dispatcher:assign_order:request-2"
+
+        first = dispatch_tool(
+            "assign_order", {}, confirmed=True, idempotency_key=key, registry=registry
+        )
+        second = dispatch_tool(
+            "assign_order", {}, confirmed=True, idempotency_key=key, registry=registry
+        )
+
+        self.assertEqual(first.data, second.data)
 
     def test_unexpected_exception_becomes_internal_error(self) -> None:
         registry = {"boom": build_exploding_tool()}

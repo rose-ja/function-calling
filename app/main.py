@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 
 from dispatcher import TOOL_REGISTRY, dispatch_tool
+from guard import IdempotencyStore, run_with_guard
+from tool_core import ToolResult
+from tool_spec import ToolSpec
 
 
 def main() -> None:
@@ -54,9 +57,50 @@ def main() -> None:
             print(f"OK    {label:<18} {summary}")
         else:
             print(
-                f"FAIL  {result.error.type.value:<20} "
+                f"FAIL  {result.error.type.value:<24} "
                 f"{result.error.execution_state.value:<12} {result.error.message}"
             )
+
+    _demo_guard()
+
+
+def _demo_guard() -> None:
+    """演示超时、重试与幂等：写入工具必须带幂等键，且同键只执行一次。"""
+    print("\n--- 治理层演示 ---")
+
+    executions: list[int] = []
+
+    def create_todo(arguments: dict[str, object]) -> ToolResult:
+        executions.append(1)
+        return ToolResult.success({"todo_id": f"todo-{len(executions):03d}"})
+
+    spec = ToolSpec(
+        name="create_todo",
+        description="演示用的写入工具",
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+        handler=create_todo,
+        risk_level="write",
+    )
+
+    store = IdempotencyStore()
+    key = "session-1:create_todo:request-7"
+
+    without_key = run_with_guard(spec, {}, store=store)
+    print(f"不带幂等键：{without_key.error.type.value}")
+
+    first = run_with_guard(spec, {}, idempotency_key=key, store=store)
+    second = run_with_guard(spec, {}, idempotency_key=key, store=store)
+    third = run_with_guard(spec, {}, idempotency_key="request-8", store=store)
+
+    print(f"第一次调用：{first.data}")
+    print(f"同键重复调用：{second.data}")
+    print(f"换一个新键：{third.data}")
+    print(f"handler 实际执行次数：{len(executions)}（3 次调用只执行了 2 次）")
 
 
 def _summarize(data: dict[str, object]) -> str:

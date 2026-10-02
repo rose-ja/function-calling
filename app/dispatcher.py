@@ -7,6 +7,7 @@ from tool_spec import ToolSpec, run_tool
 from weather_tool import WEATHER_TOOL
 from exchange_rate_tool import EXCHANGE_RATE_TOOL
 from search_tool import SEARCH_TOOL
+from guard import run_with_guard
 
 TOOL_REGISTRY: dict[str, ToolSpec] = {
     spec.name: spec
@@ -18,6 +19,7 @@ def dispatch_tool(
     arguments: Any,
     *,
     confirmed: bool = False,
+    idempotency_key: str | None = None,
     registry: dict[str, ToolSpec] | None = None,
 ) -> ToolResult:
     """把模型给出的工具名和参数当作不可信输入，逐层检查后才允许执行。"""
@@ -45,11 +47,15 @@ def dispatch_tool(
             f"{spec.name} 会修改业务数据，需要用户确认",
         )
         
-    # 4. 结构校验在 handler 之前执行。
+    # 4. 幂等键检查、参数校验、超时与重试统一交给治理层。
     try:
-        return run_tool(spec, arguments)
+        return run_with_guard(
+            spec,
+            arguments,
+            idempotency_key=idempotency_key,
+        )
     except Exception:
-        # 内部异常应写入日志，对外只返回不含堆栈的安全信息。
+        # 治理层未预料的异常在入口兜底，绝不把堆栈交给模型。
         return ToolResult.failure(
             ErrorType.INTERNAL_ERROR,
             "工具执行时发生内部错误",
