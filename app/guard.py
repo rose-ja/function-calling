@@ -8,6 +8,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 
 from tool_core import ErrorType, ExecutionState, ToolResult
+from request_context import capture_for_thread
 from tool_schema import validate_arguments
 from tool_spec import ToolSpec, run_tool
 
@@ -73,6 +74,12 @@ class IdempotencyStore:
             # setdefault：并发下先写入的结果为准，后到的结果不覆盖。
             self._results.setdefault(key, result)
             self._in_flight.discard(key)
+
+    def clear(self) -> None:
+        """清空全部记录。只给测试和演示使用。"""
+        with self._lock:
+            self._results.clear()
+            self._in_flight.clear()
 
 
 DEFAULT_IDEMPOTENCY_STORE = IdempotencyStore()
@@ -159,7 +166,10 @@ def _execute_with_retry(
 
 
 def _execute_once(spec: ToolSpec, arguments: object) -> ToolResult:
-    future = _EXECUTOR.submit(run_tool, spec, arguments)
+    # 线程池不会自动继承 ContextVar，必须在提交前捕获当前上下文，
+    # 否则 handler 在工作线程里读不到请求身份。
+    captured = capture_for_thread()
+    future = _EXECUTOR.submit(captured.run, run_tool, spec, arguments)
 
     try:
         return future.result(timeout=spec.timeout_seconds)

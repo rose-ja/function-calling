@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 
 from dispatcher import TOOL_REGISTRY, dispatch_tool
 from guard import IdempotencyStore, run_with_guard
+from request_context import RequestContext, use_context
+from todo_tool import reset_todos
 from tool_core import ToolResult
 from tool_spec import ToolSpec
 
@@ -62,6 +65,8 @@ def main() -> None:
             )
 
     _demo_guard()
+    _demo_todo()
+    print()
 
 
 def _demo_guard() -> None:
@@ -101,6 +106,68 @@ def _demo_guard() -> None:
     print(f"同键重复调用：{second.data}")
     print(f"换一个新键：{third.data}")
     print(f"handler 实际执行次数：{len(executions)}（3 次调用只执行了 2 次）")
+
+
+def _demo_todo() -> None:
+    """演示真实写入工具：身份来自会话、需要确认、需要幂等键。"""
+    print("\n--- 待办工具演示 ---")
+
+    reset_todos()
+    context = RequestContext(actor_id="user-42", session_id="session-a")
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+
+    def key(request_id: str) -> str:
+        return context.idempotency_key("create_todo", request_id)
+
+    with use_context(context):
+        print(f"查询空列表：{dispatch_tool('list_todos', {}).data}")
+
+        blocked = dispatch_tool(
+            "create_todo", {"title": "准备面试", "due_date": tomorrow}
+        )
+        print(f"未确认：{blocked.error.type.value}")
+
+        no_key = dispatch_tool(
+            "create_todo",
+            {"title": "准备面试", "due_date": tomorrow},
+            confirmed=True,
+        )
+        print(f"已确认但无幂等键：{no_key.error.type.value}")
+
+        first = dispatch_tool(
+            "create_todo",
+            {"title": "准备面试", "due_date": tomorrow},
+            confirmed=True,
+            idempotency_key=key("req-1"),
+        )
+        print(f"创建成功：{first.data}")
+
+        replay = dispatch_tool(
+            "create_todo",
+            {"title": "准备面试", "due_date": tomorrow},
+            confirmed=True,
+            idempotency_key=key("req-1"),
+        )
+        print(f"同键重放（返回同一结果）：{replay.data == first.data}")
+
+        duplicate = dispatch_tool(
+            "create_todo",
+            {"title": "准备面试", "due_date": tomorrow},
+            confirmed=True,
+            idempotency_key=key("req-2"),
+        )
+        print(f"换新键但内容相同（业务去重）：{duplicate.error.type.value}")
+
+        forged = dispatch_tool(
+            "create_todo",
+            {"title": "别人的待办", "due_date": tomorrow, "owner_id": "user-999"},
+            confirmed=True,
+            idempotency_key=key("req-3"),
+        )
+        print(f"模型伪造 owner_id：{forged.error.type.value}（{forged.error.message}）")
+
+        listing = dispatch_tool("list_todos", {})
+        print(f"最终列表：{listing.data}")
 
 
 def _summarize(data: dict[str, object]) -> str:
