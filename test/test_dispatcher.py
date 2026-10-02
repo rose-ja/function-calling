@@ -1,8 +1,8 @@
 import unittest
 
-from dispatcher import TOOL_REGISTRY, dispatch_tool
-from tool_core import ErrorType, ToolResult
-from tool_spec import ToolSpec
+from app.dispatcher import TOOL_REGISTRY, dispatch_tool
+from app.tool_core import ErrorType, ToolResult
+from app.tool_spec import ToolSpec
 
 
 def build_fake_write_tool() -> ToolSpec:
@@ -40,7 +40,7 @@ def build_exploding_tool() -> ToolSpec:
 
 class DispatcherPolicyTests(unittest.TestCase):
     def test_registry_exposes_weather_tool(self) -> None:
-        self.assertEqual(sorted(TOOL_REGISTRY), ["get_weather"])
+        self.assertEqual(sorted(TOOL_REGISTRY), ["get_exchange_rate", "get_weather"])
 
     def test_registered_tool_runs_through_registry(self) -> None:
         result = dispatch_tool("get_weather", {"city": "上海"})
